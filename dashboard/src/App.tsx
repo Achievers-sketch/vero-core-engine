@@ -1,5 +1,6 @@
 import { ThemeToggle } from './components/ThemeToggle';
 import { GuardianConfigForm } from './components/GuardianConfigForm';
+import { AuditTrailGraph } from './components/AuditTrailGraph';
 import './index.css';
 
 function App() {
@@ -48,6 +49,8 @@ function App() {
             </div>
           </div>
         </section>
+
+        <AuditTrailGraph />
       </main>
     </div>
   );
