@@ -1,4 +1,5 @@
 import { ThemeToggle } from './components/ThemeToggle';
+import GuardianConfigForm from './components/GuardianConfigForm';
 import './index.css';
 
 function App() {
@@ -20,6 +21,10 @@ function App() {
             <div className="h-20 w-20 rounded bg-green-500 flex items-center justify-center text-white">Green</div>
             <div className="h-20 w-20 rounded bg-red-500 flex items-center justify-center text-white">Red</div>
           </div>
+        </div>
+        
+        <div className="mt-8">
+          <GuardianConfigForm />
         </div>
       </main>
     </div>
