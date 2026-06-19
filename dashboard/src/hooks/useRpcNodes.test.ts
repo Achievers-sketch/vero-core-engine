@@ -1,6 +1,11 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
-import { useRpcNodes, getActiveRpcUrl, normalizeRpcUrl } from "./useRpcNodes";
+import {
+  useRpcNodes,
+  getActiveRpcUrl,
+  getActiveRpcHostUrls,
+  normalizeRpcUrl,
+} from "./useRpcNodes";
 
 describe("useRpcNodes", () => {
   beforeEach(() => {
@@ -162,5 +167,101 @@ describe("normalizeRpcUrl", () => {
 
   it("leaves URLs without trailing slashes unchanged", () => {
     expect(normalizeRpcUrl("https://a.com/path")).toBe("https://a.com/path");
+  });
+});
+
+describe("getActiveRpcHostUrls", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it("returns just the fallback when nothing is configured", () => {
+    expect(
+      getActiveRpcHostUrls({ fallback: "https://default.example.com" })
+    ).toEqual(["https://default.example.com"]);
+  });
+
+  it("returns an empty array when nothing is configured and no fallback is supplied", () => {
+    expect(getActiveRpcHostUrls()).toEqual([]);
+  });
+
+  it("places the active URL first, followed by the rest of the configured list", () => {
+    const idActive = "rpc-active";
+    localStorage.setItem(
+      "vero.dashboard.rpcNodes",
+      JSON.stringify([
+        { id: "rpc-a", label: "A", url: "https://a.example.com", latencyMs: null, status: "unknown" },
+        { id: idActive, label: "Active", url: "https://active.example.com", latencyMs: null, status: "unknown" },
+        { id: "rpc-b", label: "B", url: "https://b.example.com", latencyMs: null, status: "unknown" },
+      ])
+    );
+    localStorage.setItem("vero.dashboard.activeRpcId", idActive);
+    expect(getActiveRpcHostUrls()).toEqual([
+      "https://active.example.com",
+      "https://a.example.com",
+      "https://b.example.com",
+    ]);
+  });
+
+  it("appends a fallback URL after the configured list", () => {
+    const idActive = "rpc-active";
+    localStorage.setItem(
+      "vero.dashboard.rpcNodes",
+      JSON.stringify([
+        { id: idActive, label: "Active", url: "https://active.example.com", latencyMs: null, status: "unknown" },
+      ])
+    );
+    localStorage.setItem("vero.dashboard.activeRpcId", idActive);
+    expect(
+      getActiveRpcHostUrls({ fallback: "https://default.example.com" })
+    ).toEqual([
+      "https://active.example.com",
+      "https://default.example.com",
+    ]);
+  });
+
+  it("accepts an array of fallback URLs and dedupes against the configured list", () => {
+    const idActive = "rpc-active";
+    localStorage.setItem(
+      "vero.dashboard.rpcNodes",
+      JSON.stringify([
+        { id: idActive, label: "Active", url: "https://active.example.com", latencyMs: null, status: "unknown" },
+      ])
+    );
+    localStorage.setItem("vero.dashboard.activeRpcId", idActive);
+    expect(
+      getActiveRpcHostUrls({
+        fallback: ["https://active.example.com", "https://default.example.com"],
+      })
+    ).toEqual([
+      "https://active.example.com",
+      "https://default.example.com",
+    ]);
+  });
+
+  it("survives malformed JSON by falling back gracefully", () => {
+    localStorage.setItem("vero.dashboard.rpcNodes", "{not json");
+    localStorage.setItem("vero.dashboard.activeRpcId", "rpc-x");
+    expect(
+      getActiveRpcHostUrls({ fallback: "https://default.example.com" })
+    ).toEqual(["https://default.example.com"]);
+  });
+
+  it("ignores an orphan activeId and returns configured URLs plus fallback", () => {
+    localStorage.setItem(
+      "vero.dashboard.rpcNodes",
+      JSON.stringify([
+        { id: "rpc-a", label: "A", url: "https://a.example.com", latencyMs: null, status: "unknown" },
+        { id: "rpc-b", label: "B", url: "https://b.example.com", latencyMs: null, status: "unknown" },
+      ])
+    );
+    localStorage.setItem("vero.dashboard.activeRpcId", "rpc-ghost");
+    expect(
+      getActiveRpcHostUrls({ fallback: "https://default.example.com" })
+    ).toEqual([
+      "https://a.example.com",
+      "https://b.example.com",
+      "https://default.example.com",
+    ]);
   });
 });

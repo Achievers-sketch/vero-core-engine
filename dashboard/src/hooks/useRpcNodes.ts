@@ -153,6 +153,17 @@ export function useRpcNodes() {
 
 export type { RpcNode };
 
+function readStoredNodes(): RpcNode[] {
+  if (typeof localStorage === "undefined") return [];
+  const raw = localStorage.getItem(STORAGE_KEY);
+  if (!raw) return [];
+  try {
+    return JSON.parse(raw) as RpcNode[];
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Read the active RPC URL directly from localStorage. This is the
  * bridge-friendly counterpart to {@link useRpcNodes} — a host application
@@ -164,17 +175,79 @@ export function getActiveRpcUrl(): string | null {
   if (typeof localStorage === "undefined") return null;
   const activeId = localStorage.getItem(ACTIVE_KEY);
   if (!activeId) return null;
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    const nodes: RpcNode[] = raw ? (JSON.parse(raw) as RpcNode[]) : [];
-    const match = nodes.find((n) => n.id === activeId);
-    return match ? match.url : null;
-  } catch {
-    return null;
-  }
+  const nodes = readStoredNodes();
+  const match = nodes.find((n) => n.id === activeId);
+  return match ? match.url : null;
 }
 
 /** Normalise an RPC URL by stripping a trailing slash, if present. */
 export function normalizeRpcUrl(url: string): string {
   return url.replace(/\/+$/, "");
+}
+
+/** Options for {@link getActiveRpcHostUrls}. */
+export interface GetActiveRpcHostUrlsOptions {
+  /**
+   * Fallback URL(s) appended after the user's configured order. Empty or
+   * falsy entries are filtered out. Useful for keeping `RpcClient`
+   * constructors happy (which require a non-empty list) and ensuring
+   * production defaults are always reachable.
+   */
+  fallback?: string | string[];
+}
+
+/**
+ * Resolve the user's Custom RPC configuration into an ordered, deduped
+ * URL list suitable for `@vero/engine-bridge`'s `RpcClient`.
+ *
+ * Behaviour:
+ * - Concatenates the active URL, all configured URLs, and any supplied
+ *   fallback(s), filters out empty entries, and dedupes via `Set`
+ *   (which preserves insertion order — so the first occurrence wins,
+ *   keeping the user's active selection at the front).
+ * - The active URL is placed first so it is the primary candidate for
+ *   the first request; remaining configured URLs follow so failover
+ *   works out of the box.
+ * - If the `activeId` stored in localStorage no longer matches any node
+ *   (orphan-id case), it is silently dropped — every other configured
+ *   URL is still returned, followed by the fallback.
+ * - When nothing is configured, only `fallback` is returned. An empty
+ *   fallback (and no fallback) yields `[]` — callers that require a
+ *   non-empty list must supply a fallback.
+ *
+ * Host-app usage:
+ *
+ * ```ts
+ * import { RpcClient } from "@vero/engine-bridge";
+ * import { getActiveRpcHostUrls } from "./hooks/useRpcNodes";
+ *
+ * const DEFAULT_RPC = "https://soroban-testnet.stellar.org";
+ * const rpc = new RpcClient(getActiveRpcHostUrls({ fallback: DEFAULT_RPC }));
+ *
+ * await rpc.call(server => server.getLatestLedger());
+ * ```
+ *
+ * This intentionally keeps `dashboard` and `engine-bridge` decoupled:
+ * neither package imports from the other; the host glues them together.
+ */
+export function getActiveRpcHostUrls(
+  options: GetActiveRpcHostUrlsOptions = {}
+): string[] {
+  const fallback = normalizeFallback(options.fallback);
+  const active = getActiveRpcUrl();
+  const others =
+    typeof localStorage === "undefined" ? [] : readStoredNodes().map((n) => n.url);
+  // Set preserves insertion order, so the highest-priority source wins.
+  return Array.from(
+    new Set(
+      [active, ...others, ...fallback].filter(Boolean) as string[]
+    )
+  );
+}
+
+function normalizeFallback(fallback?: string | string[]): string[] {
+  if (!fallback) return [];
+  const list = Array.isArray(fallback) ? fallback : [fallback];
+  // Dedupe so callers can pass [A, B, A] safely.
+  return Array.from(new Set(list.filter(Boolean)));
 }
