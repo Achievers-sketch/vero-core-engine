@@ -6,6 +6,7 @@
 
 use soroban_sdk::{contracterror, panic_with_error, symbol_short, Env, Symbol};
 use sha2::{Digest, Sha256};
+use crate::circuit_breaker;
 
 use crate::types::StateCommitment;
 
@@ -35,6 +36,7 @@ pub fn compute_commitment(prev_hash: &[u8; 32], sequence: u64, payload: &[u8]) -
 /// - `commitment.sequence` ≤ last recorded sequence (replay guard)
 /// - `commitment.state_hash` doesn't match the expected derivation
 pub fn validate_transition(env: &Env, commitment: &StateCommitment, payload: &[u8]) {
+    circuit_breaker::assert_closed(env);
     let last_seq: u64 = env.storage().instance().get(&KEY_SEQ).unwrap_or(0);
     if commitment.sequence <= last_seq {
         panic_with_error!(env, AuditError::ReplayedSequence);
@@ -95,5 +97,28 @@ mod tests {
         };
         validate_transition(&env, &c, payload);
         validate_transition(&env, &c, payload); // second call must panic
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #1)")]
+    fn test_validate_blocked_when_paused() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let g = Address::generate(&env);
+        crate::circuit_breaker::init(&env, vec![&env, g.clone()]);
+        crate::circuit_breaker::trip(&env, &g);
+
+        let payload = b"state_payload_v1";
+        let hash = compute_commitment(&[0u8; 32], 1, payload);
+
+        let c = StateCommitment {
+            state_hash: BytesN::from_array(&env, &hash),
+            sequence:   1,
+            ledger:     100,
+            author:     Address::generate(&env),
+        };
+
+        // validate_transition should panic due to circuit breaker being open
+        validate_transition(&env, &c, payload);
     }
 }

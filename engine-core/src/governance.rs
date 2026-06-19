@@ -15,6 +15,7 @@ use soroban_sdk::{
 };
 
 use crate::types::{Proposal, ProposalState};
+use crate::circuit_breaker;
 
 const KEY_PROPOSALS:  Symbol = symbol_short!("PROPS");
 const KEY_SIGNERS:    Symbol = symbol_short!("SIGNERS");
@@ -64,6 +65,7 @@ fn load_proposals(env: &Env) -> Map<u64, (Proposal, u32)> {
 
 /// Submit a new proposal. Returns the assigned proposal id.
 pub fn propose(env: &Env, mut proposal: Proposal) -> u64 {
+    circuit_breaker::assert_closed(env);
     let signers: Vec<Address> = env.storage().instance().get(&KEY_SIGNERS).unwrap_or(vec![env]);
     if !signers.contains(&proposal.proposer) {
         panic_with_error!(env, GovError::NotASigner);
@@ -86,6 +88,7 @@ pub fn propose(env: &Env, mut proposal: Proposal) -> u64 {
 /// The signer must hold at least `min_stake` tokens to prevent Sybil voting.
 /// Transitions state from Pending → Approved when threshold is met.
 pub fn approve(env: &Env, signer: &Address, proposal_id: u64) {
+    circuit_breaker::assert_closed(env);
     signer.require_auth();
     let signers: Vec<Address> = env.storage().instance().get(&KEY_SIGNERS).unwrap_or(vec![env]);
     if !signers.contains(signer) {
@@ -134,6 +137,7 @@ pub fn approve(env: &Env, signer: &Address, proposal_id: u64) {
 /// Execute a proposal after threshold approvals and time-lock expiry.
 /// Transitions state from Approved → Executed.
 pub fn execute(env: &Env, proposal_id: u64) -> Proposal {
+    circuit_breaker::assert_closed(env);
     let mut props = load_proposals(env);
     let (mut prop, unlock) = props.get(proposal_id).unwrap_or_else(|| {
         panic_with_error!(env, GovError::ProposalNotFound)

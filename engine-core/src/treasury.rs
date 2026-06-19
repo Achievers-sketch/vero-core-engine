@@ -12,6 +12,7 @@ use soroban_sdk::{contracttype, panic_with_error, symbol_short, Address, Bytes, 
 use sha2::{Sha256, Digest};
 
 use crate::types::TreasurySnapshot;
+use crate::circuit_breaker;
 
 const KEY_SNAP_COUNTER: Symbol = symbol_short!("SNAPC");
 const KEY_SNAP_PREFIX:  Symbol = symbol_short!("SNAP");
@@ -40,6 +41,7 @@ pub fn record_snapshot(
     triggered_by: String,
     context: Map<Symbol, soroban_sdk::Val>,
 ) -> u64 {
+    circuit_breaker::assert_closed(env);
     // Validate balance is non-negative
     if total_balance < 0 {
         panic_with_error!(env, TreasuryError::InvalidBalance);
