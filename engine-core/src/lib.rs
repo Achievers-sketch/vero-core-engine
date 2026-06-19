@@ -3,3 +3,6 @@ pub mod governance;
 pub mod circuit_breaker;
 pub mod treasury;
 pub mod types;
+
+#[cfg(test)]
+mod governance_tests;
