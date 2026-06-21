@@ -6,7 +6,7 @@ mod tests {
     use crate::types::{Proposal, ProposalState};
     use soroban_sdk::{
         contract, contractimpl,
-        testutils::{Address as _, Ledger},
+        testutils::{Address as _, Events, Ledger},
         vec, Address, BytesN, Env,
     };
 
@@ -294,6 +294,38 @@ mod tests {
         env.as_contract(&cid, || {
             let id = governance::propose(&env, make_proposal(&env, 1, &a));
             governance::approve(&env, &outsider, id); // NotASigner = 1
+        });
+    }
+
+    // ── audit log ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_every_vote_is_logged() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let a = Address::generate(&env);
+        let b = Address::generate(&env);
+        let cid = init_two(&env, &a, &b); // threshold = 2
+
+        env.as_contract(&cid, || {
+            let id = governance::propose(&env, make_proposal(&env, 1, &a));
+
+            // A below-threshold vote must still emit an audit-log event.
+            let before = env.events().all().len();
+            governance::approve(&env, &a, id);
+            let after_first = env.events().all().len();
+            assert!(
+                after_first > before,
+                "below-threshold vote must be logged"
+            );
+
+            // The threshold-meeting vote must also add to the audit log.
+            governance::approve(&env, &b, id);
+            let after_second = env.events().all().len();
+            assert!(
+                after_second > after_first,
+                "threshold vote must be logged"
+            );
         });
     }
 }
