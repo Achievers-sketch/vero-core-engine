@@ -1,10 +1,5 @@
-//! Emergency circuit-breaker — halts all state transitions when tripped.
-//!
-//! Only authorised guardians may open or close the breaker.
-//! All stateful entry-points must call `assert_closed` before proceeding.
-
-use soroban_sdk::{contracterror, panic_with_error, symbol_short, vec, Address, Env, Symbol, Vec, BytesN, Map, Val};
-
+use soroban_sdk::{contracterror, panic_with_error, symbol_short, vec, Address, Env, IntoVal, Symbol, Vec, BytesN, Map};
+use crate::event_utils::publish_event;
 use crate::types::BreakerState;
 
 const KEY_STATE:    Symbol = symbol_short!("CB_STATE");
@@ -23,7 +18,6 @@ pub fn init(env: &Env, guardians: Vec<Address>) {
     env.storage().instance().set(&KEY_GUARDIAN, &guardians);
 }
 
-/// Panics with `BreakerError::CircuitOpen` when the breaker is tripped.
 pub fn assert_closed(env: &Env) {
     let state: BreakerState = env
         .storage()
@@ -35,7 +29,6 @@ pub fn assert_closed(env: &Env) {
     }
 }
 
-/// Trip the breaker — halts the engine. Requires guardian auth.
 pub fn trip(env: &Env, guardian: &Address) {
     guardian.require_auth();
     require_guardian(env, guardian);
@@ -44,13 +37,11 @@ pub fn trip(env: &Env, guardian: &Address) {
         (symbol_short!("CB"), symbol_short!("tripped")),
         guardian.clone(),
     );
-    // Emit structured Event for circuit breaker trip
     let mut payload = Map::new(env);
-    payload.set(Symbol::short("guardian"), guardian.clone().into());
+    payload.set(symbol_short!("guardian"), guardian.clone().into_val(env));
     publish_event(env, BytesN::from_array(env, & [0u8; 32]), BytesN::from_array(env, & [0u8; 32]), payload);
 }
 
-/// Reset the breaker — resumes normal operation. Requires guardian auth.
 pub fn reset(env: &Env, guardian: &Address) {
     guardian.require_auth();
     require_guardian(env, guardian);
@@ -59,9 +50,8 @@ pub fn reset(env: &Env, guardian: &Address) {
         (symbol_short!("CB"), symbol_short!("reset")),
         guardian.clone(),
     );
-    // Emit structured Event for circuit breaker reset
     let mut payload = Map::new(env);
-    payload.set(Symbol::short("guardian"), guardian.clone().into());
+    payload.set(symbol_short!("guardian"), guardian.clone().into_val(env));
     publish_event(env, BytesN::from_array(env, & [0u8; 32]), BytesN::from_array(env, & [0u8; 32]), payload);
 }
 
@@ -106,23 +96,20 @@ mod tests {
         let g = Address::generate(&env);
         let contract_id = env.register_contract(None, TestContract);
 
-        // Init and verify closed
         env.as_contract(&contract_id, || {
             init(&env, vec![&env, g.clone()]);
-            assert_closed(&env); // should not panic
+            assert_closed(&env);
         });
 
-        // Trip the breaker
         env.as_contract(&contract_id, || {
             trip(&env, &g);
             let state: BreakerState = env.storage().instance().get(&KEY_STATE).unwrap();
             assert_eq!(state, BreakerState::Open);
         });
 
-        // Reset the breaker
         env.as_contract(&contract_id, || {
             reset(&env, &g);
-            assert_closed(&env); // back to closed — no panic
+            assert_closed(&env);
         });
     }
 
