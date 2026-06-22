@@ -18,7 +18,8 @@ use crate::event_struct::{MOD_GOV, ACT_PROPOSE, ACT_APPROVE, ACT_EXECUTE};
 use crate::event_utils::publish_event;
 use crate::types::{Proposal, ProposalState};
 use soroban_sdk::{
-    contracterror, panic_with_error, symbol_short, token, vec, Address, BytesN, Env, Symbol, Vec,
+    contracterror, panic_with_error, symbol_short, token, vec, Address, BytesN, Env, IntoVal, Map,
+    Symbol, Val, Vec,
 };
 
 const KEY_SIGNERS:   Symbol = symbol_short!("SIGNERS");
@@ -104,6 +105,27 @@ pub fn approve(env: &Env, voter: &Address, proposal_id: u64) {
 
     prop.approved_by.push_back(voter.clone());
 
+    // Audit log: record every vote, not only the one that meets threshold.
+    // Topics carry the voter so logs can be filtered per address; the data and
+    // structured payload carry the proposal id and the running approval tally.
+    let votes_cast = prop.approved_by.len();
+
+    env.events().publish(
+        (symbol_short!("GOV"), symbol_short!("vote"), voter.clone()),
+        (proposal_id, votes_cast),
+    );
+
+    let mut vote_payload = Map::new(env);
+    vote_payload.set(Symbol::short("proposal_id"), proposal_id.into());
+    vote_payload.set(Symbol::short("voter"), voter.clone().into_val(env));
+    vote_payload.set(Symbol::short("votes"), votes_cast.into());
+    publish_event(
+        env,
+        BytesN::from_array(env, &[0u8; 32]),
+        BytesN::from_array(env, &[0u8; 32]),
+        vote_payload,
+    );
+
     let threshold: u32 = env.storage().instance().get(&KEY_THRESH).unwrap_or(1);
 
     if prop.approved_by.len() >= threshold {
@@ -158,18 +180,56 @@ pub fn execute(env: &Env, proposal_id: u64) -> Proposal {
     prop
 }
 
-// ── internal ──────────────────────────────────────────────────────────────────
+/// Cancel (roll back) a proposal that has not yet been executed.
+///
+/// Reverts the proposal to the terminal `Cancelled` state so it can no longer
+/// be approved or executed. Only a governance signer may cancel, and only while
+/// the proposal is still in a non-terminal state — an already executed proposal
+/// cannot be undone, and an already cancelled proposal cannot be cancelled again.
+pub fn cancel(env: &Env, caller: &Address, proposal_id: u64) -> Proposal {
+    caller.require_auth();
+    require_signer(env, caller);
 
-/// Build the persistent storage key for a proposal: `"P"` + `id` encoded as hex digits.
-/// Symbol allows up to 32 chars; a u64 in hex is at most 16 chars, so `P` + 16 = 17 — safe.
-fn proposal_key(env: &Env, id: u64) -> Symbol {
-    Symbol::new(env, &format!("P{:x}", id))
-}
+    let mut props: Map<u64, (Proposal, u32)> = env
+        .storage()
+        .instance()
+        .get(&KEY_PROPOSALS)
+        .unwrap_or_else(|| panic_with_error!(env, GovError::ProposalNotFound));
 
-fn extend_proposal_ttl(env: &Env, key: &Symbol) {
-    env.storage()
-        .persistent()
-        .extend_ttl(key, PROPOSAL_TTL_THRESHOLD, PROPOSAL_TTL_EXTEND_TO);
+    let (mut prop, unlock) = props
+        .get(proposal_id)
+        .unwrap_or_else(|| panic_with_error!(env, GovError::ProposalNotFound));
+
+    // An executed proposal is terminal and cannot be rolled back.
+    if prop.state == ProposalState::Executed {
+        panic_with_error!(env, GovError::AlreadyExecuted);
+    }
+
+    // Reject any other invalid transition (e.g. cancelling an already
+    // cancelled proposal).
+    if prop.state == ProposalState::Cancelled {
+        panic_with_error!(env, GovError::InvalidStateTransition);
+    }
+
+    prop.state = ProposalState::Cancelled;
+    props.set(proposal_id, (prop.clone(), unlock));
+    env.storage().instance().set(&KEY_PROPOSALS, &props);
+
+    env.events().publish(
+        (symbol_short!("GOV"), symbol_short!("cancel")),
+        proposal_id,
+    );
+
+    let mut payload = Map::new(env);
+    payload.set(Symbol::short("proposal_id"), proposal_id.into());
+    publish_event(
+        env,
+        BytesN::from_array(env, &[0u8; 32]),
+        BytesN::from_array(env, &[0u8; 32]),
+        payload,
+    );
+
+    prop
 }
 
 fn require_signer(env: &Env, voter: &Address) {
