@@ -255,8 +255,7 @@ export class EventQueue {
         ORDER BY enqueueTime ASC
       `);
 
-      const rows = stmt.all(this.maxRetries) as any[];
-      // Return raw JSON for eventData to avoid parsing large result sets eagerly.
+            // Return raw JSON for eventData to avoid parsing large result sets eagerly.
       const rows = stmt.all() as any[];
       return rows.map(row => ({
         id: row.id,
